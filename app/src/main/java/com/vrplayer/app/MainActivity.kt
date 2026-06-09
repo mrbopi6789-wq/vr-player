@@ -3,14 +3,12 @@ package com.vrplayer.app
 import android.app.Activity
 import android.content.Intent
 import android.media.MediaPlayer
-import android.media.PlaybackParams
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.OpenableColumns
-import android.view.SurfaceHolder
 import android.view.View
 import android.view.WindowInsets
 import android.view.WindowInsetsController
@@ -67,7 +65,6 @@ class MainActivity : AppCompatActivity() {
             showHomeScreen()
         }
         binding.tapOverlay.setOnClickListener { toggleControls() }
-
         binding.seekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
                 if (fromUser) {
@@ -134,7 +131,6 @@ class MainActivity : AppCompatActivity() {
         isPreparedRight = false
         playerLeft?.release()
         playerRight?.release()
-
         binding.tvVideoName.text = getVideoName(uri)
 
         playerLeft = MediaPlayer().apply {
@@ -266,7 +262,11 @@ class MainActivity : AppCompatActivity() {
         isMuted = !isMuted
         val vol = if (isMuted) 0f else 1f
         playerLeft?.setVolume(vol, vol)
-        Toast.makeText(this, if (isMuted) "Muted 🔇" else "Unmuted 🔊", Toast.LENGTH_SHORT).show()
+        Toast.makeText(
+            this,
+            if (isMuted) "Muted 🔇" else "Unmuted 🔊",
+            Toast.LENGTH_SHORT
+        ).show()
     }
 
     private fun showSpeedDialog() {
@@ -277,10 +277,16 @@ class MainActivity : AppCompatActivity() {
             .setItems(speeds) { _, which ->
                 playbackSpeed = values[which]
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                    val params = PlaybackParams().setSpeed(playbackSpeed)
                     try {
-                        playerLeft?.playbackParams = params
-                        playerRight?.playbackParams = params
+                        val leftParams = playerLeft?.playbackParams?.also {
+                            it.speed = playbackSpeed
+                        }
+                        if (leftParams != null) playerLeft?.playbackParams = leftParams
+
+                        val rightParams = playerRight?.playbackParams?.also {
+                            it.speed = playbackSpeed
+                        }
+                        if (rightParams != null) playerRight?.playbackParams = rightParams
                     } catch (e: Exception) {}
                 }
                 Toast.makeText(this, "Speed: ${speeds[which]}", Toast.LENGTH_SHORT).show()
@@ -291,24 +297,34 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun restartVideo() {
-        playerLeft?.seekTo(0); playerRight?.seekTo(0); playVideo()
+        playerLeft?.seekTo(0)
+        playerRight?.seekTo(0)
+        playVideo()
     }
 
     private fun skipForward() {
         val pos = (playerLeft?.currentPosition ?: 0) + 10000
-        playerLeft?.seekTo(pos); playerRight?.seekTo(pos); playVideo()
+        playerLeft?.seekTo(pos)
+        playerRight?.seekTo(pos)
+        playVideo()
     }
 
     private fun skipBack() {
         val pos = maxOf(0, (playerLeft?.currentPosition ?: 0) - 10000)
-        playerLeft?.seekTo(pos); playerRight?.seekTo(pos); playVideo()
+        playerLeft?.seekTo(pos)
+        playerRight?.seekTo(pos)
+        playVideo()
     }
 
     private fun goFullscreen() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             window.insetsController?.let {
-                it.hide(WindowInsets.Type.statusBars() or WindowInsets.Type.navigationBars())
-                it.systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                it.hide(
+                    WindowInsets.Type.statusBars() or
+                    WindowInsets.Type.navigationBars()
+                )
+                it.systemBarsBehavior =
+                    WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
             }
         } else {
             @Suppress("DEPRECATION")
