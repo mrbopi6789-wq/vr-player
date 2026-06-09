@@ -3,6 +3,7 @@ package com.vrplayer.app
 import android.app.Activity
 import android.content.Intent
 import android.media.MediaPlayer
+import android.media.PlaybackParams
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -23,23 +24,17 @@ import com.vrplayer.app.databinding.ActivityMainBinding
 class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
-
-    // Two MediaPlayers — one for each eye
     private var playerLeft: MediaPlayer? = null
     private var playerRight: MediaPlayer? = null
-
     private var videoUri: Uri? = null
     private var isPlaying = false
     private var isPreparedLeft = false
     private var isPreparedRight = false
-
-    // Settings
     private var isMuted = false
     private var playbackSpeed = 1.0f
-    private var brightness = 1.0f
-
-    // Progress bar update handler
+    private var buttonVisible = true
     private val handler = Handler(Looper.getMainLooper())
+
     private val progressRunnable = object : Runnable {
         override fun run() {
             updateProgress()
@@ -55,42 +50,28 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
-
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         goFullscreen()
-
-        setupSurfaces()
         setupButtons()
-
-        // Show home screen initially
         showHomeScreen()
     }
 
-    // -------------------------------------------------------------------------
-    // UI Setup
-    // -------------------------------------------------------------------------
-
     private fun setupButtons() {
-        // Pick video button
-        binding.btnPickVideo.setOnClickListener {
-            openGallery()
-        }
-
-        // Play/Pause button
+        binding.btnPickVideo.setOnClickListener { openGallery() }
         binding.btnPlayPause.setOnClickListener {
             if (isPlaying) pauseVideo() else playVideo()
         }
-
-        // Settings button
-        binding.btnSettings.setOnClickListener {
-            showSettingsDialog()
+        binding.btnSettings.setOnClickListener { showSettingsDialog() }
+        binding.btnBack.setOnClickListener {
+            stopAndReset()
+            showHomeScreen()
         }
+        binding.tapOverlay.setOnClickListener { toggleControls() }
 
-        // Seekbar
         binding.seekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
                 if (fromUser) {
-                    val pos = (progress * (playerLeft?.duration ?: 0) / 100)
+                    val pos = progress * (playerLeft?.duration ?: 0) / 100
                     playerLeft?.seekTo(pos)
                     playerRight?.seekTo(pos)
                 }
@@ -98,51 +79,20 @@ class MainActivity : AppCompatActivity() {
             override fun onStartTrackingTouch(sb: SeekBar?) {}
             override fun onStopTrackingTouch(sb: SeekBar?) {}
         })
-
-        // Tap screen to show/hide controls
-        binding.tapOverlay.setOnClickListener {
-            toggleControls()
-        }
-
-        // Back button on player screen
-        binding.btnBack.setOnClickListener {
-            stopAndReset()
-            showHomeScreen()
-        }
     }
-
-    private fun setupSurfaces() {
-        // Left surface
-        binding.surfaceLeft.holder.addCallback(object : SurfaceHolder.Callback {
-            override fun surfaceCreated(holder: SurfaceHolder) {}
-            override fun surfaceChanged(holder: SurfaceHolder, f: Int, w: Int, h: Int) {}
-            override fun surfaceDestroyed(holder: SurfaceHolder) {}
-        })
-
-        // Right surface
-        binding.surfaceRight.holder.addCallback(object : SurfaceHolder.Callback {
-            override fun surfaceCreated(holder: SurfaceHolder) {}
-            override fun surfaceChanged(holder: SurfaceHolder, f: Int, w: Int, h: Int) {}
-            override fun surfaceDestroyed(holder: SurfaceHolder) {}
-        })
-    }
-
-    // -------------------------------------------------------------------------
-    // Screen states
-    // -------------------------------------------------------------------------
 
     private fun showHomeScreen() {
         binding.homeScreen.visibility = View.VISIBLE
         binding.playerScreen.visibility = View.GONE
         binding.controlsOverlay.visibility = View.GONE
+        binding.tapOverlay.visibility = View.GONE
     }
 
     private fun showPlayerScreen() {
         binding.homeScreen.visibility = View.GONE
         binding.playerScreen.visibility = View.VISIBLE
         binding.controlsOverlay.visibility = View.VISIBLE
-
-        // Auto hide controls after 3 seconds
+        binding.tapOverlay.visibility = View.VISIBLE
         handler.postDelayed({ hideControls() }, 3000)
     }
 
@@ -163,14 +113,8 @@ class MainActivity : AppCompatActivity() {
         binding.controlsOverlay.animate().alpha(0f).setDuration(500).start()
     }
 
-    // -------------------------------------------------------------------------
-    // Video picking
-    // -------------------------------------------------------------------------
-
     private fun openGallery() {
-        val intent = Intent(Intent.ACTION_PICK).apply {
-            type = "video/*"
-        }
+        val intent = Intent(Intent.ACTION_PICK).apply { type = "video/*" }
         startActivityForResult(intent, VIDEO_PICK_REQUEST)
     }
 
@@ -184,29 +128,19 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // -------------------------------------------------------------------------
-    // Video playback
-    // -------------------------------------------------------------------------
-
     private fun loadVideo(uri: Uri) {
         showPlayerScreen()
         isPreparedLeft = false
         isPreparedRight = false
-
-        // Show video name
-        val name = getVideoName(uri)
-        binding.tvVideoName.text = name
-
-        // Release old players
         playerLeft?.release()
         playerRight?.release()
 
-        // Create left player
+        binding.tvVideoName.text = getVideoName(uri)
+
         playerLeft = MediaPlayer().apply {
             setDataSource(this@MainActivity, uri)
             setDisplay(binding.surfaceLeft.holder)
             setVolume(if (isMuted) 0f else 1f, if (isMuted) 0f else 1f)
-            isLooping = false
             setOnPreparedListener {
                 isPreparedLeft = true
                 tryStartPlayback()
@@ -216,19 +150,14 @@ class MainActivity : AppCompatActivity() {
                 updatePlayPauseButton()
                 handler.removeCallbacks(progressRunnable)
             }
-            setOnErrorListener { _, _, _ ->
-                Toast.makeText(this@MainActivity, "Error playing video", Toast.LENGTH_SHORT).show()
-                true
-            }
+            setOnErrorListener { _, _, _ -> true }
             prepareAsync()
         }
 
-        // Create right player — same video, no audio
         playerRight = MediaPlayer().apply {
             setDataSource(this@MainActivity, uri)
             setDisplay(binding.surfaceRight.holder)
-            setVolume(0f, 0f)  // Always muted — audio comes from left player only
-            isLooping = false
+            setVolume(0f, 0f)
             setOnPreparedListener {
                 isPreparedRight = true
                 tryStartPlayback()
@@ -239,9 +168,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun tryStartPlayback() {
-        // Only start when BOTH players are ready
         if (!isPreparedLeft || !isPreparedRight) return
-
         playerLeft?.start()
         playerRight?.start()
         isPlaying = true
@@ -266,12 +193,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun stopAndReset() {
         handler.removeCallbacks(progressRunnable)
-        playerLeft?.stop()
-        playerLeft?.release()
-        playerLeft = null
-        playerRight?.stop()
-        playerRight?.release()
-        playerRight = null
+        playerLeft?.stop(); playerLeft?.release(); playerLeft = null
+        playerRight?.stop(); playerRight?.release(); playerRight = null
         isPlaying = false
         isPreparedLeft = false
         isPreparedRight = false
@@ -289,7 +212,7 @@ class MainActivity : AppCompatActivity() {
         val duration = player.duration
         val position = player.currentPosition
         if (duration > 0) {
-            binding.seekBar.progress = (position * 100 / duration)
+            binding.seekBar.progress = position * 100 / duration
             binding.tvCurrentTime.text = formatTime(position)
             binding.tvTotalTime.text = formatTime(duration)
         }
@@ -297,9 +220,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun formatTime(ms: Int): String {
         val seconds = ms / 1000
-        val minutes = seconds / 60
-        val secs = seconds % 60
-        return "$minutes:${secs.toString().padStart(2, '0')}"
+        return "${seconds / 60}:${(seconds % 60).toString().padStart(2, '0')}"
     }
 
     private fun getVideoName(uri: Uri): String {
@@ -315,23 +236,16 @@ class MainActivity : AppCompatActivity() {
         return name.removeSuffix(".mp4").removeSuffix(".mkv").removeSuffix(".mov")
     }
 
-    // -------------------------------------------------------------------------
-    // Settings Dialog
-    // -------------------------------------------------------------------------
-
     private fun showSettingsDialog() {
         pauseVideo()
-
         val options = arrayOf(
             if (isMuted) "🔊 Unmute Audio" else "🔇 Mute Audio",
             "⏩ Playback Speed (current: ${playbackSpeed}x)",
             "↩️ Restart Video",
             "⏭ Skip Forward 10s",
             "⏮ Skip Back 10s",
-            "🔆 Screen stays ON (active)",
             "❌ Close Video"
         )
-
         AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
             .setTitle("VR Player Settings")
             .setItems(options) { _, which ->
@@ -341,16 +255,10 @@ class MainActivity : AppCompatActivity() {
                     2 -> restartVideo()
                     3 -> skipForward()
                     4 -> skipBack()
-                    5 -> Toast.makeText(this, "Screen will stay on while playing ✓", Toast.LENGTH_SHORT).show()
-                    6 -> {
-                        stopAndReset()
-                        showHomeScreen()
-                    }
+                    5 -> { stopAndReset(); showHomeScreen() }
                 }
             }
-            .setOnDismissListener {
-                if (!isPlaying) playVideo()
-            }
+            .setOnDismissListener { if (!isPlaying) playVideo() }
             .show()
     }
 
@@ -364,14 +272,16 @@ class MainActivity : AppCompatActivity() {
     private fun showSpeedDialog() {
         val speeds = arrayOf("0.5x", "0.75x", "1.0x (Normal)", "1.25x", "1.5x", "2.0x")
         val values = floatArrayOf(0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 2.0f)
-
         AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
             .setTitle("Playback Speed")
             .setItems(speeds) { _, which ->
                 playbackSpeed = values[which]
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                    playerLeft?.playbackParams = playerLeft?.playbackParams?.setSpeed(playbackSpeed)!!
-                    playerRight?.playbackParams = playerRight?.playbackParams?.setSpeed(playbackSpeed)!!
+                    val params = PlaybackParams().setSpeed(playbackSpeed)
+                    try {
+                        playerLeft?.playbackParams = params
+                        playerRight?.playbackParams = params
+                    } catch (e: Exception) {}
                 }
                 Toast.makeText(this, "Speed: ${speeds[which]}", Toast.LENGTH_SHORT).show()
                 playVideo()
@@ -381,28 +291,18 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun restartVideo() {
-        playerLeft?.seekTo(0)
-        playerRight?.seekTo(0)
-        playVideo()
+        playerLeft?.seekTo(0); playerRight?.seekTo(0); playVideo()
     }
 
     private fun skipForward() {
         val pos = (playerLeft?.currentPosition ?: 0) + 10000
-        playerLeft?.seekTo(pos)
-        playerRight?.seekTo(pos)
-        playVideo()
+        playerLeft?.seekTo(pos); playerRight?.seekTo(pos); playVideo()
     }
 
     private fun skipBack() {
         val pos = maxOf(0, (playerLeft?.currentPosition ?: 0) - 10000)
-        playerLeft?.seekTo(pos)
-        playerRight?.seekTo(pos)
-        playVideo()
+        playerLeft?.seekTo(pos); playerRight?.seekTo(pos); playVideo()
     }
-
-    // -------------------------------------------------------------------------
-    // Fullscreen
-    // -------------------------------------------------------------------------
 
     private fun goFullscreen() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -421,10 +321,6 @@ class MainActivity : AppCompatActivity() {
             )
         }
     }
-
-    // -------------------------------------------------------------------------
-    // Lifecycle
-    // -------------------------------------------------------------------------
 
     override fun onResume() {
         super.onResume()
