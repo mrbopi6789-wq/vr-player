@@ -5,6 +5,7 @@
     android:layout_height="match_parent"
     android:background="#000000">
 
+    <!-- HOME SCREEN -->
     <LinearLayout
         android:id="@+id/homeScreen"
         android:layout_width="match_parent"
@@ -89,33 +90,48 @@
 
     </LinearLayout>
 
-    <LinearLayout
+    <!-- PLAYER SCREEN — black background with centered video container -->
+    <FrameLayout
         android:id="@+id/playerScreen"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:orientation="horizontal"
         android:background="#000000"
         android:visibility="gone">
 
-        <SurfaceView
-            android:id="@+id/surfaceLeft"
-            android:layout_width="0dp"
+        <!-- Video container — this is what gets scaled with +/- buttons -->
+        <LinearLayout
+            android:id="@+id/videoContainer"
+            android:layout_width="match_parent"
             android:layout_height="match_parent"
-            android:layout_weight="1" />
+            android:layout_gravity="center"
+            android:orientation="horizontal"
+            android:background="#000000">
 
-        <View
-            android:layout_width="2dp"
-            android:layout_height="match_parent"
-            android:background="#000000" />
+            <!-- LEFT EYE -->
+            <SurfaceView
+                android:id="@+id/surfaceLeft"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1" />
 
-        <SurfaceView
-            android:id="@+id/surfaceRight"
-            android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_weight="1" />
+            <!-- CENTER DIVIDER -->
+            <View
+                android:layout_width="2dp"
+                android:layout_height="match_parent"
+                android:background="#000000" />
 
-    </LinearLayout>
+            <!-- RIGHT EYE -->
+            <SurfaceView
+                android:id="@+id/surfaceRight"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1" />
 
+        </LinearLayout>
+
+    </FrameLayout>
+
+    <!-- TAP OVERLAY -->
     <View
         android:id="@+id/tapOverlay"
         android:layout_width="match_parent"
@@ -125,6 +141,7 @@
         android:focusable="true"
         android:visibility="gone" />
 
+    <!-- CONTROLS OVERLAY -->
     <LinearLayout
         android:id="@+id/controlsOverlay"
         android:layout_width="match_parent"
@@ -138,6 +155,7 @@
         android:paddingBottom="12dp"
         android:visibility="gone">
 
+        <!-- Video title -->
         <TextView
             android:id="@+id/tvVideoName"
             android:layout_width="match_parent"
@@ -150,6 +168,7 @@
             android:ellipsize="end"
             android:layout_marginBottom="8dp" />
 
+        <!-- Seek bar -->
         <SeekBar
             android:id="@+id/seekBar"
             android:layout_width="match_parent"
@@ -158,12 +177,14 @@
             android:thumbTint="#1D9BF0"
             android:layout_marginBottom="8dp" />
 
+        <!-- Bottom controls row -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
             android:gravity="center_vertical">
 
+            <!-- Current time -->
             <TextView
                 android:id="@+id/tvCurrentTime"
                 android:layout_width="wrap_content"
@@ -179,6 +200,7 @@
                 android:textColor="#666666"
                 android:textSize="12sp" />
 
+            <!-- Total time -->
             <TextView
                 android:id="@+id/tvTotalTime"
                 android:layout_width="0dp"
@@ -188,6 +210,48 @@
                 android:textColor="#CCCCCC"
                 android:textSize="12sp" />
 
+            <!-- MINUS button — shrink video -->
+            <TextView
+                android:id="@+id/btnZoomOut"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:text="−"
+                android:textColor="#FFFFFF"
+                android:textSize="22sp"
+                android:gravity="center"
+                android:background="@drawable/bg_btn_control"
+                android:clickable="true"
+                android:focusable="true"
+                android:layout_marginEnd="4dp" />
+
+            <!-- Screen size indicator -->
+            <TextView
+                android:id="@+id/tvScreenSize"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text='7.0"'
+                android:textColor="#1D9BF0"
+                android:textSize="11sp"
+                android:textStyle="bold"
+                android:layout_marginEnd="4dp"
+                android:minWidth="36dp"
+                android:gravity="center" />
+
+            <!-- PLUS button — grow video -->
+            <TextView
+                android:id="@+id/btnZoomIn"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:text="+"
+                android:textColor="#FFFFFF"
+                android:textSize="22sp"
+                android:gravity="center"
+                android:background="@drawable/bg_btn_control"
+                android:clickable="true"
+                android:focusable="true"
+                android:layout_marginEnd="8dp" />
+
+            <!-- Back button -->
             <TextView
                 android:id="@+id/btnBack"
                 android:layout_width="44dp"
@@ -201,6 +265,7 @@
                 android:focusable="true"
                 android:layout_marginEnd="8dp" />
 
+            <!-- Play/Pause button -->
             <TextView
                 android:id="@+id/btnPlayPause"
                 android:layout_width="52dp"
@@ -214,6 +279,7 @@
                 android:focusable="true"
                 android:layout_marginEnd="8dp" />
 
+            <!-- Settings button -->
             <TextView
                 android:id="@+id/btnSettings"
                 android:layout_width="44dp"
