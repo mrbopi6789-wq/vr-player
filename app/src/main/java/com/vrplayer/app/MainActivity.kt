@@ -36,10 +36,16 @@ class MainActivity : AppCompatActivity() {
     private var controlsVisible: Boolean = true
     private val handler = Handler(Looper.getMainLooper())
 
-    // Track when surfaces are ready
+    // Surface ready tracking
     private var isSurfaceLeftReady: Boolean = false
     private var isSurfaceRightReady: Boolean = false
     private var pendingVideoUri: Uri? = null
+
+    // Screen size simulation: 4.5 to 7.0 inches, step 0.1
+    private var currentScreenInches: Float = 7.0f
+    private val minInches = 4.5f
+    private val maxInches = 7.0f
+    private val stepInches = 0.1f
 
     private val progressRunnable = object : Runnable {
         override fun run() {
@@ -112,24 +118,54 @@ class MainActivity : AppCompatActivity() {
         requestCode: Int, permissions: Array<String>, grantResults: IntArray
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == PERMISSION_REQUEST) {
-            if (grantResults.isEmpty() || grantResults[0] != PackageManager.PERMISSION_GRANTED) {
-                Toast.makeText(this, "Storage permission needed!", Toast.LENGTH_LONG).show()
-            }
+        if (requestCode == PERMISSION_REQUEST &&
+            (grantResults.isEmpty() || grantResults[0] != PackageManager.PERMISSION_GRANTED)) {
+            Toast.makeText(this, "Storage permission needed!", Toast.LENGTH_LONG).show()
         }
     }
 
     private fun setupButtons() {
         binding.btnPickVideo.setOnClickListener { openGallery() }
+
         binding.btnPlayPause.setOnClickListener {
             if (isPlaying) pauseVideo() else playVideo()
         }
+
         binding.btnSettings.setOnClickListener { showSettingsDialog() }
+
         binding.btnBack.setOnClickListener {
             stopAndReset()
             showHomeScreen()
         }
+
         binding.tapOverlay.setOnClickListener { toggleControls() }
+
+        // Zoom OUT — shrink video (simulate smaller screen)
+        binding.btnZoomOut.setOnClickListener {
+            if (currentScreenInches > minInches) {
+                currentScreenInches = (currentScreenInches - stepInches)
+                    .coerceAtLeast(minInches)
+                currentScreenInches = Math.round(currentScreenInches * 10f) / 10f
+                applyVideoScale()
+                updateScreenSizeLabel()
+            } else {
+                Toast.makeText(this, "Minimum size reached (4.5\")", Toast.LENGTH_SHORT).show()
+            }
+        }
+
+        // Zoom IN — grow video (simulate bigger screen)
+        binding.btnZoomIn.setOnClickListener {
+            if (currentScreenInches < maxInches) {
+                currentScreenInches = (currentScreenInches + stepInches)
+                    .coerceAtMost(maxInches)
+                currentScreenInches = Math.round(currentScreenInches * 10f) / 10f
+                applyVideoScale()
+                updateScreenSizeLabel()
+            } else {
+                Toast.makeText(this, "Maximum size reached (7.0\")", Toast.LENGTH_SHORT).show()
+            }
+        }
+
         binding.seekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
                 if (fromUser) {
@@ -141,6 +177,23 @@ class MainActivity : AppCompatActivity() {
             override fun onStartTrackingTouch(sb: SeekBar?) {}
             override fun onStopTrackingTouch(sb: SeekBar?) {}
         })
+
+        updateScreenSizeLabel()
+    }
+
+    /**
+     * Applies scale to the video container based on current screen size setting.
+     * 7.0" = full size (scale 1.0)
+     * 4.5" = smallest (scale ~0.64)
+     */
+    private fun applyVideoScale() {
+        val scale = currentScreenInches / maxInches
+        binding.videoContainer.scaleX = scale
+        binding.videoContainer.scaleY = scale
+    }
+
+    private fun updateScreenSizeLabel() {
+        binding.tvScreenSize.text = String.format("%.1f\"", currentScreenInches)
     }
 
     private fun showHomeScreen() {
@@ -155,6 +208,8 @@ class MainActivity : AppCompatActivity() {
         binding.playerScreen.visibility = View.VISIBLE
         binding.controlsOverlay.visibility = View.VISIBLE
         binding.tapOverlay.visibility = View.VISIBLE
+        // Apply current scale when showing player
+        applyVideoScale()
         handler.postDelayed({ hideControls() }, 3000)
     }
 
@@ -196,14 +251,12 @@ class MainActivity : AppCompatActivity() {
                 )
             } catch (e: Exception) {}
 
-            // Show player screen first so surfaces get created
             showPlayerScreen()
             binding.tvVideoName.text = getVideoName(uri)
 
             if (isSurfaceLeftReady && isSurfaceRightReady) {
                 loadVideoNow(uri)
             } else {
-                // Surfaces not ready yet — wait for them
                 pendingVideoUri = uri
             }
         }
@@ -213,19 +266,14 @@ class MainActivity : AppCompatActivity() {
         try {
             isPreparedLeft = false
             isPreparedRight = false
-            playerLeft?.release()
-            playerRight?.release()
-            playerLeft = null
-            playerRight = null
+            playerLeft?.release(); playerLeft = null
+            playerRight?.release(); playerRight = null
 
             val leftPlayer = MediaPlayer()
             leftPlayer.setDataSource(this, uri)
             leftPlayer.setDisplay(binding.surfaceLeft.holder)
             leftPlayer.setVolume(if (isMuted) 0f else 1f, if (isMuted) 0f else 1f)
-            leftPlayer.setOnPreparedListener {
-                isPreparedLeft = true
-                tryStartPlayback()
-            }
+            leftPlayer.setOnPreparedListener { isPreparedLeft = true; tryStartPlayback() }
             leftPlayer.setOnCompletionListener {
                 isPlaying = false
                 updatePlayPauseButton()
@@ -239,10 +287,7 @@ class MainActivity : AppCompatActivity() {
             rightPlayer.setDataSource(this, uri)
             rightPlayer.setDisplay(binding.surfaceRight.holder)
             rightPlayer.setVolume(0f, 0f)
-            rightPlayer.setOnPreparedListener {
-                isPreparedRight = true
-                tryStartPlayback()
-            }
+            rightPlayer.setOnPreparedListener { isPreparedRight = true; tryStartPlayback() }
             rightPlayer.setOnErrorListener { _, _, _ -> true }
             rightPlayer.prepareAsync()
             playerRight = rightPlayer
@@ -277,10 +322,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun pauseVideo() {
-        try {
-            playerLeft?.pause()
-            playerRight?.pause()
-        } catch (e: Exception) {}
+        try { playerLeft?.pause(); playerRight?.pause() } catch (e: Exception) {}
         isPlaying = false
         updatePlayPauseButton()
     }
@@ -298,6 +340,11 @@ class MainActivity : AppCompatActivity() {
         binding.seekBar.progress = 0
         binding.tvCurrentTime.text = "0:00"
         binding.tvTotalTime.text = "0:00"
+        // Reset scale
+        binding.videoContainer.scaleX = 1f
+        binding.videoContainer.scaleY = 1f
+        currentScreenInches = maxInches
+        updateScreenSizeLabel()
     }
 
     private fun updatePlayPauseButton() {
@@ -350,14 +397,8 @@ class MainActivity : AppCompatActivity() {
                 when (which) {
                     0 -> toggleMute()
                     1 -> { playerLeft?.seekTo(0); playerRight?.seekTo(0); playVideo() }
-                    2 -> {
-                        val pos = (playerLeft?.currentPosition ?: 0) + 10000
-                        playerLeft?.seekTo(pos); playerRight?.seekTo(pos); playVideo()
-                    }
-                    3 -> {
-                        val pos = maxOf(0, (playerLeft?.currentPosition ?: 0) - 10000)
-                        playerLeft?.seekTo(pos); playerRight?.seekTo(pos); playVideo()
-                    }
+                    2 -> { val p = (playerLeft?.currentPosition ?: 0) + 10000; playerLeft?.seekTo(p); playerRight?.seekTo(p); playVideo() }
+                    3 -> { val p = maxOf(0, (playerLeft?.currentPosition ?: 0) - 10000); playerLeft?.seekTo(p); playerRight?.seekTo(p); playVideo() }
                     4 -> { stopAndReset(); showHomeScreen() }
                 }
             }
