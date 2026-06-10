@@ -11,6 +11,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.OpenableColumns
+import android.view.SurfaceHolder
 import android.view.View
 import android.view.WindowInsets
 import android.view.WindowInsetsController
@@ -35,6 +36,11 @@ class MainActivity : AppCompatActivity() {
     private var controlsVisible: Boolean = true
     private val handler = Handler(Looper.getMainLooper())
 
+    // Track when surfaces are ready
+    private var isSurfaceLeftReady: Boolean = false
+    private var isSurfaceRightReady: Boolean = false
+    private var pendingVideoUri: Uri? = null
+
     private val progressRunnable = object : Runnable {
         override fun run() {
             updateProgress()
@@ -53,9 +59,42 @@ class MainActivity : AppCompatActivity() {
         setContentView(binding.root)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         goFullscreen()
+        setupSurfaceCallbacks()
         setupButtons()
         showHomeScreen()
         requestStoragePermission()
+    }
+
+    private fun setupSurfaceCallbacks() {
+        binding.surfaceLeft.holder.addCallback(object : SurfaceHolder.Callback {
+            override fun surfaceCreated(holder: SurfaceHolder) {
+                isSurfaceLeftReady = true
+                tryLoadPendingVideo()
+            }
+            override fun surfaceChanged(holder: SurfaceHolder, f: Int, w: Int, h: Int) {}
+            override fun surfaceDestroyed(holder: SurfaceHolder) {
+                isSurfaceLeftReady = false
+            }
+        })
+
+        binding.surfaceRight.holder.addCallback(object : SurfaceHolder.Callback {
+            override fun surfaceCreated(holder: SurfaceHolder) {
+                isSurfaceRightReady = true
+                tryLoadPendingVideo()
+            }
+            override fun surfaceChanged(holder: SurfaceHolder, f: Int, w: Int, h: Int) {}
+            override fun surfaceDestroyed(holder: SurfaceHolder) {
+                isSurfaceRightReady = false
+            }
+        })
+    }
+
+    private fun tryLoadPendingVideo() {
+        val uri = pendingVideoUri ?: return
+        if (isSurfaceLeftReady && isSurfaceRightReady) {
+            pendingVideoUri = null
+            loadVideoNow(uri)
+        }
     }
 
     private fun requestStoragePermission() {
@@ -75,7 +114,7 @@ class MainActivity : AppCompatActivity() {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == PERMISSION_REQUEST) {
             if (grantResults.isEmpty() || grantResults[0] != PackageManager.PERMISSION_GRANTED) {
-                Toast.makeText(this, "Storage permission needed to play videos!", Toast.LENGTH_LONG).show()
+                Toast.makeText(this, "Storage permission needed!", Toast.LENGTH_LONG).show()
             }
         }
     }
@@ -150,30 +189,34 @@ class MainActivity : AppCompatActivity() {
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == VIDEO_PICK_REQUEST && resultCode == Activity.RESULT_OK) {
-            val uri = data?.data
-            if (uri != null) {
-                try {
-                    contentResolver.takePersistableUriPermission(
-                        uri, Intent.FLAG_GRANT_READ_URI_PERMISSION
-                    )
-                } catch (e: Exception) {}
-                loadVideo(uri)
+            val uri = data?.data ?: return
+            try {
+                contentResolver.takePersistableUriPermission(
+                    uri, Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            } catch (e: Exception) {}
+
+            // Show player screen first so surfaces get created
+            showPlayerScreen()
+            binding.tvVideoName.text = getVideoName(uri)
+
+            if (isSurfaceLeftReady && isSurfaceRightReady) {
+                loadVideoNow(uri)
             } else {
-                Toast.makeText(this, "Could not load video", Toast.LENGTH_SHORT).show()
+                // Surfaces not ready yet — wait for them
+                pendingVideoUri = uri
             }
         }
     }
 
-    private fun loadVideo(uri: Uri) {
+    private fun loadVideoNow(uri: Uri) {
         try {
-            showPlayerScreen()
             isPreparedLeft = false
             isPreparedRight = false
             playerLeft?.release()
             playerRight?.release()
             playerLeft = null
             playerRight = null
-            binding.tvVideoName.text = getVideoName(uri)
 
             val leftPlayer = MediaPlayer()
             leftPlayer.setDataSource(this, uri)
@@ -205,7 +248,7 @@ class MainActivity : AppCompatActivity() {
             playerRight = rightPlayer
 
         } catch (e: Exception) {
-            Toast.makeText(this, "Error loading video: ${e.message}", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "Error: ${e.message}", Toast.LENGTH_LONG).show()
             showHomeScreen()
         }
     }
@@ -219,7 +262,7 @@ class MainActivity : AppCompatActivity() {
             updatePlayPauseButton()
             handler.post(progressRunnable)
         } catch (e: Exception) {
-            Toast.makeText(this, "Error starting playback", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Playback error", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -245,14 +288,13 @@ class MainActivity : AppCompatActivity() {
     private fun stopAndReset() {
         handler.removeCallbacks(progressRunnable)
         try { playerLeft?.stop() } catch (e: Exception) {}
-        playerLeft?.release()
-        playerLeft = null
+        playerLeft?.release(); playerLeft = null
         try { playerRight?.stop() } catch (e: Exception) {}
-        playerRight?.release()
-        playerRight = null
+        playerRight?.release(); playerRight = null
         isPlaying = false
         isPreparedLeft = false
         isPreparedRight = false
+        pendingVideoUri = null
         binding.seekBar.progress = 0
         binding.tvCurrentTime.text = "0:00"
         binding.tvTotalTime.text = "0:00"
@@ -307,27 +349,16 @@ class MainActivity : AppCompatActivity() {
             .setItems(options) { _, which ->
                 when (which) {
                     0 -> toggleMute()
-                    1 -> {
-                        playerLeft?.seekTo(0)
-                        playerRight?.seekTo(0)
-                        playVideo()
-                    }
+                    1 -> { playerLeft?.seekTo(0); playerRight?.seekTo(0); playVideo() }
                     2 -> {
                         val pos = (playerLeft?.currentPosition ?: 0) + 10000
-                        playerLeft?.seekTo(pos)
-                        playerRight?.seekTo(pos)
-                        playVideo()
+                        playerLeft?.seekTo(pos); playerRight?.seekTo(pos); playVideo()
                     }
                     3 -> {
                         val pos = maxOf(0, (playerLeft?.currentPosition ?: 0) - 10000)
-                        playerLeft?.seekTo(pos)
-                        playerRight?.seekTo(pos)
-                        playVideo()
+                        playerLeft?.seekTo(pos); playerRight?.seekTo(pos); playVideo()
                     }
-                    4 -> {
-                        stopAndReset()
-                        showHomeScreen()
-                    }
+                    4 -> { stopAndReset(); showHomeScreen() }
                 }
             }
             .setOnDismissListener { if (!isPlaying) playVideo() }
@@ -338,23 +369,15 @@ class MainActivity : AppCompatActivity() {
         isMuted = !isMuted
         val vol = if (isMuted) 0f else 1f
         playerLeft?.setVolume(vol, vol)
-        Toast.makeText(
-            this,
-            if (isMuted) "Muted 🔇" else "Unmuted 🔊",
-            Toast.LENGTH_SHORT
-        ).show()
+        Toast.makeText(this, if (isMuted) "Muted 🔇" else "Unmuted 🔊", Toast.LENGTH_SHORT).show()
         playVideo()
     }
 
     private fun goFullscreen() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             window.insetsController?.let {
-                it.hide(
-                    WindowInsets.Type.statusBars() or
-                    WindowInsets.Type.navigationBars()
-                )
-                it.systemBarsBehavior =
-                    WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                it.hide(WindowInsets.Type.statusBars() or WindowInsets.Type.navigationBars())
+                it.systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
             }
         } else {
             @Suppress("DEPRECATION")
