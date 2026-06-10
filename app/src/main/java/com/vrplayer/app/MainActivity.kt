@@ -24,11 +24,11 @@ class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private var playerLeft: MediaPlayer? = null
     private var playerRight: MediaPlayer? = null
-    private var isPlaying = false
-    private var isPreparedLeft = false
-    private var isPreparedRight = false
-    private var isMuted = false
-    private var controlsVisible = true
+    private var isPlaying: Boolean = false
+    private var isPreparedLeft: Boolean = false
+    private var isPreparedRight: Boolean = false
+    private var isMuted: Boolean = false
+    private var controlsVisible: Boolean = true
     private val handler = Handler(Looper.getMainLooper())
 
     private val progressRunnable = object : Runnable {
@@ -54,20 +54,15 @@ class MainActivity : AppCompatActivity() {
 
     private fun setupButtons() {
         binding.btnPickVideo.setOnClickListener { openGallery() }
-
         binding.btnPlayPause.setOnClickListener {
             if (isPlaying) pauseVideo() else playVideo()
         }
-
         binding.btnSettings.setOnClickListener { showSettingsDialog() }
-
         binding.btnBack.setOnClickListener {
             stopAndReset()
             showHomeScreen()
         }
-
         binding.tapOverlay.setOnClickListener { toggleControls() }
-
         binding.seekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
                 if (fromUser) {
@@ -131,28 +126,34 @@ class MainActivity : AppCompatActivity() {
         playerRight?.release()
         binding.tvVideoName.text = getVideoName(uri)
 
-        playerLeft = MediaPlayer().apply {
-            setDataSource(this@MainActivity, uri)
-            setDisplay(binding.surfaceLeft.holder)
-            setVolume(if (isMuted) 0f else 1f, if (isMuted) 0f else 1f)
-            setOnPreparedListener { isPreparedLeft = true; tryStartPlayback() }
-            setOnCompletionListener {
-                isPlaying = false
-                updatePlayPauseButton()
-                handler.removeCallbacks(progressRunnable)
-            }
-            setOnErrorListener { _, _, _ -> true }
-            prepareAsync()
+        val leftPlayer = MediaPlayer()
+        leftPlayer.setDataSource(this, uri)
+        leftPlayer.setDisplay(binding.surfaceLeft.holder)
+        leftPlayer.setVolume(if (isMuted) 0f else 1f, if (isMuted) 0f else 1f)
+        leftPlayer.setOnPreparedListener {
+            isPreparedLeft = true
+            tryStartPlayback()
         }
+        leftPlayer.setOnCompletionListener {
+            isPlaying = false
+            updatePlayPauseButton()
+            handler.removeCallbacks(progressRunnable)
+        }
+        leftPlayer.setOnErrorListener { _, _, _ -> true }
+        leftPlayer.prepareAsync()
+        playerLeft = leftPlayer
 
-        playerRight = MediaPlayer().apply {
-            setDataSource(this@MainActivity, uri)
-            setDisplay(binding.surfaceRight.holder)
-            setVolume(0f, 0f)
-            setOnPreparedListener { isPreparedRight = true; tryStartPlayback() }
-            setOnErrorListener { _, _, _ -> true }
-            prepareAsync()
+        val rightPlayer = MediaPlayer()
+        rightPlayer.setDataSource(this, uri)
+        rightPlayer.setDisplay(binding.surfaceRight.holder)
+        rightPlayer.setVolume(0f, 0f)
+        rightPlayer.setOnPreparedListener {
+            isPreparedRight = true
+            tryStartPlayback()
         }
+        rightPlayer.setOnErrorListener { _, _, _ -> true }
+        rightPlayer.prepareAsync()
+        playerRight = rightPlayer
     }
 
     private fun tryStartPlayback() {
@@ -181,8 +182,12 @@ class MainActivity : AppCompatActivity() {
 
     private fun stopAndReset() {
         handler.removeCallbacks(progressRunnable)
-        playerLeft?.stop(); playerLeft?.release(); playerLeft = null
-        playerRight?.stop(); playerRight?.release(); playerRight = null
+        playerLeft?.stop()
+        playerLeft?.release()
+        playerLeft = null
+        playerRight?.stop()
+        playerRight?.release()
+        playerRight = null
         isPlaying = false
         isPreparedLeft = false
         isPreparedRight = false
@@ -238,10 +243,27 @@ class MainActivity : AppCompatActivity() {
             .setItems(options) { _, which ->
                 when (which) {
                     0 -> toggleMute()
-                    1 -> { playerLeft?.seekTo(0); playerRight?.seekTo(0); playVideo() }
-                    2 -> { val p = (playerLeft?.currentPosition ?: 0) + 10000; playerLeft?.seekTo(p); playerRight?.seekTo(p); playVideo() }
-                    3 -> { val p = maxOf(0, (playerLeft?.currentPosition ?: 0) - 10000); playerLeft?.seekTo(p); playerRight?.seekTo(p); playVideo() }
-                    4 -> { stopAndReset(); showHomeScreen() }
+                    1 -> {
+                        playerLeft?.seekTo(0)
+                        playerRight?.seekTo(0)
+                        playVideo()
+                    }
+                    2 -> {
+                        val pos = (playerLeft?.currentPosition ?: 0) + 10000
+                        playerLeft?.seekTo(pos)
+                        playerRight?.seekTo(pos)
+                        playVideo()
+                    }
+                    3 -> {
+                        val pos = maxOf(0, (playerLeft?.currentPosition ?: 0) - 10000)
+                        playerLeft?.seekTo(pos)
+                        playerRight?.seekTo(pos)
+                        playVideo()
+                    }
+                    4 -> {
+                        stopAndReset()
+                        showHomeScreen()
+                    }
                 }
             }
             .setOnDismissListener { if (!isPlaying) playVideo() }
@@ -252,15 +274,23 @@ class MainActivity : AppCompatActivity() {
         isMuted = !isMuted
         val vol = if (isMuted) 0f else 1f
         playerLeft?.setVolume(vol, vol)
-        Toast.makeText(this, if (isMuted) "Muted 🔇" else "Unmuted 🔊", Toast.LENGTH_SHORT).show()
+        Toast.makeText(
+            this,
+            if (isMuted) "Muted 🔇" else "Unmuted 🔊",
+            Toast.LENGTH_SHORT
+        ).show()
         playVideo()
     }
 
     private fun goFullscreen() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             window.insetsController?.let {
-                it.hide(WindowInsets.Type.statusBars() or WindowInsets.Type.navigationBars())
-                it.systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                it.hide(
+                    WindowInsets.Type.statusBars() or
+                    WindowInsets.Type.navigationBars()
+                )
+                it.systemBarsBehavior =
+                    WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
             }
         } else {
             @Suppress("DEPRECATION")
