@@ -1,7 +1,9 @@
 package com.vrplayer.app
 
+import android.Manifest
 import android.app.Activity
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Build
@@ -17,6 +19,8 @@ import android.widget.SeekBar
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import com.vrplayer.app.databinding.ActivityMainBinding
 
 class MainActivity : AppCompatActivity() {
@@ -40,6 +44,7 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val VIDEO_PICK_REQUEST = 101
+        private const val PERMISSION_REQUEST = 102
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -50,6 +55,29 @@ class MainActivity : AppCompatActivity() {
         goFullscreen()
         setupButtons()
         showHomeScreen()
+        requestStoragePermission()
+    }
+
+    private fun requestStoragePermission() {
+        val permission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            Manifest.permission.READ_MEDIA_VIDEO
+        } else {
+            Manifest.permission.READ_EXTERNAL_STORAGE
+        }
+        if (ContextCompat.checkSelfPermission(this, permission) != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(this, arrayOf(permission), PERMISSION_REQUEST)
+        }
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int, permissions: Array<String>, grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == PERMISSION_REQUEST) {
+            if (grantResults.isEmpty() || grantResults[0] != PackageManager.PERMISSION_GRANTED) {
+                Toast.makeText(this, "Storage permission needed to play videos!", Toast.LENGTH_LONG).show()
+            }
+        }
     }
 
     private fun setupButtons() {
@@ -107,85 +135,119 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun openGallery() {
-        val intent = Intent(Intent.ACTION_PICK).apply { type = "video/*" }
-        startActivityForResult(intent, VIDEO_PICK_REQUEST)
+        try {
+            val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
+                type = "video/*"
+            }
+            startActivityForResult(intent, VIDEO_PICK_REQUEST)
+        } catch (e: Exception) {
+            val intent = Intent(Intent.ACTION_PICK).apply { type = "video/*" }
+            startActivityForResult(intent, VIDEO_PICK_REQUEST)
+        }
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == VIDEO_PICK_REQUEST && resultCode == Activity.RESULT_OK) {
-            data?.data?.let { uri -> loadVideo(uri) }
+            val uri = data?.data
+            if (uri != null) {
+                try {
+                    contentResolver.takePersistableUriPermission(
+                        uri, Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    )
+                } catch (e: Exception) {}
+                loadVideo(uri)
+            } else {
+                Toast.makeText(this, "Could not load video", Toast.LENGTH_SHORT).show()
+            }
         }
     }
 
     private fun loadVideo(uri: Uri) {
-        showPlayerScreen()
-        isPreparedLeft = false
-        isPreparedRight = false
-        playerLeft?.release()
-        playerRight?.release()
-        binding.tvVideoName.text = getVideoName(uri)
+        try {
+            showPlayerScreen()
+            isPreparedLeft = false
+            isPreparedRight = false
+            playerLeft?.release()
+            playerRight?.release()
+            playerLeft = null
+            playerRight = null
+            binding.tvVideoName.text = getVideoName(uri)
 
-        val leftPlayer = MediaPlayer()
-        leftPlayer.setDataSource(this, uri)
-        leftPlayer.setDisplay(binding.surfaceLeft.holder)
-        leftPlayer.setVolume(if (isMuted) 0f else 1f, if (isMuted) 0f else 1f)
-        leftPlayer.setOnPreparedListener {
-            isPreparedLeft = true
-            tryStartPlayback()
-        }
-        leftPlayer.setOnCompletionListener {
-            isPlaying = false
-            updatePlayPauseButton()
-            handler.removeCallbacks(progressRunnable)
-        }
-        leftPlayer.setOnErrorListener { _, _, _ -> true }
-        leftPlayer.prepareAsync()
-        playerLeft = leftPlayer
+            val leftPlayer = MediaPlayer()
+            leftPlayer.setDataSource(this, uri)
+            leftPlayer.setDisplay(binding.surfaceLeft.holder)
+            leftPlayer.setVolume(if (isMuted) 0f else 1f, if (isMuted) 0f else 1f)
+            leftPlayer.setOnPreparedListener {
+                isPreparedLeft = true
+                tryStartPlayback()
+            }
+            leftPlayer.setOnCompletionListener {
+                isPlaying = false
+                updatePlayPauseButton()
+                handler.removeCallbacks(progressRunnable)
+            }
+            leftPlayer.setOnErrorListener { _, _, _ -> true }
+            leftPlayer.prepareAsync()
+            playerLeft = leftPlayer
 
-        val rightPlayer = MediaPlayer()
-        rightPlayer.setDataSource(this, uri)
-        rightPlayer.setDisplay(binding.surfaceRight.holder)
-        rightPlayer.setVolume(0f, 0f)
-        rightPlayer.setOnPreparedListener {
-            isPreparedRight = true
-            tryStartPlayback()
+            val rightPlayer = MediaPlayer()
+            rightPlayer.setDataSource(this, uri)
+            rightPlayer.setDisplay(binding.surfaceRight.holder)
+            rightPlayer.setVolume(0f, 0f)
+            rightPlayer.setOnPreparedListener {
+                isPreparedRight = true
+                tryStartPlayback()
+            }
+            rightPlayer.setOnErrorListener { _, _, _ -> true }
+            rightPlayer.prepareAsync()
+            playerRight = rightPlayer
+
+        } catch (e: Exception) {
+            Toast.makeText(this, "Error loading video: ${e.message}", Toast.LENGTH_LONG).show()
+            showHomeScreen()
         }
-        rightPlayer.setOnErrorListener { _, _, _ -> true }
-        rightPlayer.prepareAsync()
-        playerRight = rightPlayer
     }
 
     private fun tryStartPlayback() {
         if (!isPreparedLeft || !isPreparedRight) return
-        playerLeft?.start()
-        playerRight?.start()
-        isPlaying = true
-        updatePlayPauseButton()
-        handler.post(progressRunnable)
+        try {
+            playerLeft?.start()
+            playerRight?.start()
+            isPlaying = true
+            updatePlayPauseButton()
+            handler.post(progressRunnable)
+        } catch (e: Exception) {
+            Toast.makeText(this, "Error starting playback", Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun playVideo() {
-        playerLeft?.start()
-        playerRight?.start()
-        isPlaying = true
-        updatePlayPauseButton()
-        handler.post(progressRunnable)
+        try {
+            playerLeft?.start()
+            playerRight?.start()
+            isPlaying = true
+            updatePlayPauseButton()
+            handler.post(progressRunnable)
+        } catch (e: Exception) {}
     }
 
     private fun pauseVideo() {
-        playerLeft?.pause()
-        playerRight?.pause()
+        try {
+            playerLeft?.pause()
+            playerRight?.pause()
+        } catch (e: Exception) {}
         isPlaying = false
         updatePlayPauseButton()
     }
 
     private fun stopAndReset() {
         handler.removeCallbacks(progressRunnable)
-        playerLeft?.stop()
+        try { playerLeft?.stop() } catch (e: Exception) {}
         playerLeft?.release()
         playerLeft = null
-        playerRight?.stop()
+        try { playerRight?.stop() } catch (e: Exception) {}
         playerRight?.release()
         playerRight = null
         isPlaying = false
@@ -201,14 +263,16 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateProgress() {
-        val player = playerLeft ?: return
-        val duration = player.duration
-        val position = player.currentPosition
-        if (duration > 0) {
-            binding.seekBar.progress = position * 100 / duration
-            binding.tvCurrentTime.text = formatTime(position)
-            binding.tvTotalTime.text = formatTime(duration)
-        }
+        try {
+            val player = playerLeft ?: return
+            val duration = player.duration
+            val position = player.currentPosition
+            if (duration > 0) {
+                binding.seekBar.progress = position * 100 / duration
+                binding.tvCurrentTime.text = formatTime(position)
+                binding.tvTotalTime.text = formatTime(duration)
+            }
+        } catch (e: Exception) {}
     }
 
     private fun formatTime(ms: Int): String {
@@ -317,7 +381,7 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         handler.removeCallbacksAndMessages(null)
-        playerLeft?.release()
-        playerRight?.release()
+        try { playerLeft?.release() } catch (e: Exception) {}
+        try { playerRight?.release() } catch (e: Exception) {}
     }
 }
