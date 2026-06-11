@@ -4,12 +4,14 @@ import android.Manifest
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.database.Cursor
 import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.provider.MediaStore
 import android.provider.OpenableColumns
 import android.view.SurfaceHolder
 import android.view.View
@@ -33,6 +35,8 @@ class MainActivity : AppCompatActivity() {
     private var isPreparedLeft: Boolean = false
     private var isPreparedRight: Boolean = false
     private var isMuted: Boolean = false
+    private var isLooping: Boolean = false
+    private var isAutoNext: Boolean = false
     private var controlsVisible: Boolean = true
     private val handler = Handler(Looper.getMainLooper())
 
@@ -41,7 +45,14 @@ class MainActivity : AppCompatActivity() {
     private var isSurfaceRightReady: Boolean = false
     private var pendingVideoUri: Uri? = null
 
-    // Screen size simulation: 4.5 to 7.0 inches, step 0.1
+    // Current video URI for loop/next
+    private var currentVideoUri: Uri? = null
+
+    // All videos on the device for auto-next
+    private var allVideoUris: MutableList<Uri> = mutableListOf()
+    private var currentVideoIndex: Int = 0
+
+    // Screen size simulation
     private var currentScreenInches: Float = 7.0f
     private val minInches = 4.5f
     private val maxInches = 7.0f
@@ -78,9 +89,7 @@ class MainActivity : AppCompatActivity() {
                 tryLoadPendingVideo()
             }
             override fun surfaceChanged(holder: SurfaceHolder, f: Int, w: Int, h: Int) {}
-            override fun surfaceDestroyed(holder: SurfaceHolder) {
-                isSurfaceLeftReady = false
-            }
+            override fun surfaceDestroyed(holder: SurfaceHolder) { isSurfaceLeftReady = false }
         })
 
         binding.surfaceRight.holder.addCallback(object : SurfaceHolder.Callback {
@@ -89,9 +98,7 @@ class MainActivity : AppCompatActivity() {
                 tryLoadPendingVideo()
             }
             override fun surfaceChanged(holder: SurfaceHolder, f: Int, w: Int, h: Int) {}
-            override fun surfaceDestroyed(holder: SurfaceHolder) {
-                isSurfaceRightReady = false
-            }
+            override fun surfaceDestroyed(holder: SurfaceHolder) { isSurfaceRightReady = false }
         })
     }
 
@@ -111,6 +118,8 @@ class MainActivity : AppCompatActivity() {
         }
         if (ContextCompat.checkSelfPermission(this, permission) != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(this, arrayOf(permission), PERMISSION_REQUEST)
+        } else {
+            loadAllVideosFromGallery()
         }
     }
 
@@ -118,9 +127,40 @@ class MainActivity : AppCompatActivity() {
         requestCode: Int, permissions: Array<String>, grantResults: IntArray
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == PERMISSION_REQUEST &&
-            (grantResults.isEmpty() || grantResults[0] != PackageManager.PERMISSION_GRANTED)) {
-            Toast.makeText(this, "Storage permission needed!", Toast.LENGTH_LONG).show()
+        if (requestCode == PERMISSION_REQUEST) {
+            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                loadAllVideosFromGallery()
+            } else {
+                Toast.makeText(this, "Storage permission needed!", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    /**
+     * Loads all video URIs from the device gallery into allVideoUris list.
+     * Used for auto-next feature.
+     */
+    private fun loadAllVideosFromGallery() {
+        allVideoUris.clear()
+        try {
+            val projection = arrayOf(MediaStore.Video.Media._ID)
+            val sortOrder = "${MediaStore.Video.Media.DATE_ADDED} DESC"
+            val cursor: Cursor? = contentResolver.query(
+                MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+                projection, null, null, sortOrder
+            )
+            cursor?.use {
+                val idColumn = it.getColumnIndexOrThrow(MediaStore.Video.Media._ID)
+                while (it.moveToNext()) {
+                    val id = it.getLong(idColumn)
+                    val uri = Uri.withAppendedPath(
+                        MediaStore.Video.Media.EXTERNAL_CONTENT_URI, id.toString()
+                    )
+                    allVideoUris.add(uri)
+                }
+            }
+        } catch (e: Exception) {
+            // Gallery scan failed — auto-next won't work but app still works
         }
     }
 
@@ -140,29 +180,25 @@ class MainActivity : AppCompatActivity() {
 
         binding.tapOverlay.setOnClickListener { toggleControls() }
 
-        // Zoom OUT — shrink video (simulate smaller screen)
         binding.btnZoomOut.setOnClickListener {
             if (currentScreenInches > minInches) {
-                currentScreenInches = (currentScreenInches - stepInches)
-                    .coerceAtLeast(minInches)
-                currentScreenInches = Math.round(currentScreenInches * 10f) / 10f
+                currentScreenInches = Math.round((currentScreenInches - stepInches) * 10f) / 10f
+                currentScreenInches = currentScreenInches.coerceAtLeast(minInches)
                 applyVideoScale()
                 updateScreenSizeLabel()
             } else {
-                Toast.makeText(this, "Minimum size reached (4.5\")", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Minimum size (4.5\")", Toast.LENGTH_SHORT).show()
             }
         }
 
-        // Zoom IN — grow video (simulate bigger screen)
         binding.btnZoomIn.setOnClickListener {
             if (currentScreenInches < maxInches) {
-                currentScreenInches = (currentScreenInches + stepInches)
-                    .coerceAtMost(maxInches)
-                currentScreenInches = Math.round(currentScreenInches * 10f) / 10f
+                currentScreenInches = Math.round((currentScreenInches + stepInches) * 10f) / 10f
+                currentScreenInches = currentScreenInches.coerceAtMost(maxInches)
                 applyVideoScale()
                 updateScreenSizeLabel()
             } else {
-                Toast.makeText(this, "Maximum size reached (7.0\")", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Maximum size (7.0\")", Toast.LENGTH_SHORT).show()
             }
         }
 
@@ -181,11 +217,6 @@ class MainActivity : AppCompatActivity() {
         updateScreenSizeLabel()
     }
 
-    /**
-     * Applies scale to the video container based on current screen size setting.
-     * 7.0" = full size (scale 1.0)
-     * 4.5" = smallest (scale ~0.64)
-     */
     private fun applyVideoScale() {
         val scale = currentScreenInches / maxInches
         binding.videoContainer.scaleX = scale
@@ -208,7 +239,6 @@ class MainActivity : AppCompatActivity() {
         binding.playerScreen.visibility = View.VISIBLE
         binding.controlsOverlay.visibility = View.VISIBLE
         binding.tapOverlay.visibility = View.VISIBLE
-        // Apply current scale when showing player
         applyVideoScale()
         handler.postDelayed({ hideControls() }, 3000)
     }
@@ -251,6 +281,10 @@ class MainActivity : AppCompatActivity() {
                 )
             } catch (e: Exception) {}
 
+            // Find this video's index in allVideoUris for auto-next
+            currentVideoIndex = allVideoUris.indexOfFirst { it == uri }
+            if (currentVideoIndex < 0) currentVideoIndex = 0
+
             showPlayerScreen()
             binding.tvVideoName.text = getVideoName(uri)
 
@@ -264,6 +298,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun loadVideoNow(uri: Uri) {
         try {
+            currentVideoUri = uri
             isPreparedLeft = false
             isPreparedRight = false
             playerLeft?.release(); playerLeft = null
@@ -274,11 +309,7 @@ class MainActivity : AppCompatActivity() {
             leftPlayer.setDisplay(binding.surfaceLeft.holder)
             leftPlayer.setVolume(if (isMuted) 0f else 1f, if (isMuted) 0f else 1f)
             leftPlayer.setOnPreparedListener { isPreparedLeft = true; tryStartPlayback() }
-            leftPlayer.setOnCompletionListener {
-                isPlaying = false
-                updatePlayPauseButton()
-                handler.removeCallbacks(progressRunnable)
-            }
+            leftPlayer.setOnCompletionListener { onVideoComplete() }
             leftPlayer.setOnErrorListener { _, _, _ -> true }
             leftPlayer.prepareAsync()
             playerLeft = leftPlayer
@@ -295,6 +326,56 @@ class MainActivity : AppCompatActivity() {
         } catch (e: Exception) {
             Toast.makeText(this, "Error: ${e.message}", Toast.LENGTH_LONG).show()
             showHomeScreen()
+        }
+    }
+
+    /**
+     * Called when video finishes playing.
+     * If loop is ON → restart same video.
+     * If auto-next is ON → play next video from gallery.
+     * Otherwise → stop.
+     */
+    private fun onVideoComplete() {
+        when {
+            isLooping -> {
+                // Restart same video
+                playerLeft?.seekTo(0)
+                playerRight?.seekTo(0)
+                playerLeft?.start()
+                playerRight?.start()
+            }
+            isAutoNext -> {
+                // Play next video from gallery
+                playNextVideo()
+            }
+            else -> {
+                isPlaying = false
+                updatePlayPauseButton()
+                handler.removeCallbacks(progressRunnable)
+            }
+        }
+    }
+
+    /**
+     * Plays the next video in the gallery list.
+     * Wraps around to the first video if at the end.
+     */
+    private fun playNextVideo() {
+        if (allVideoUris.isEmpty()) {
+            isPlaying = false
+            updatePlayPauseButton()
+            return
+        }
+
+        currentVideoIndex = (currentVideoIndex + 1) % allVideoUris.size
+        val nextUri = allVideoUris[currentVideoIndex]
+
+        binding.tvVideoName.text = getVideoName(nextUri)
+
+        if (isSurfaceLeftReady && isSurfaceRightReady) {
+            loadVideoNow(nextUri)
+        } else {
+            pendingVideoUri = nextUri
         }
     }
 
@@ -337,10 +418,10 @@ class MainActivity : AppCompatActivity() {
         isPreparedLeft = false
         isPreparedRight = false
         pendingVideoUri = null
+        currentVideoUri = null
         binding.seekBar.progress = 0
         binding.tvCurrentTime.text = "0:00"
         binding.tvTotalTime.text = "0:00"
-        // Reset scale
         binding.videoContainer.scaleX = 1f
         binding.videoContainer.scaleY = 1f
         currentScreenInches = maxInches
@@ -386,8 +467,10 @@ class MainActivity : AppCompatActivity() {
         pauseVideo()
         val options = arrayOf(
             if (isMuted) "🔊 Unmute Audio" else "🔇 Mute Audio",
+            if (isLooping) "🔁 Loop — ON (tap to turn OFF)" else "🔁 Loop — OFF (tap to turn ON)",
+            if (isAutoNext) "⏭ Auto Next — ON (tap to turn OFF)" else "⏭ Auto Next — OFF (tap to turn ON)",
             "↩️ Restart Video",
-            "⏭ Skip Forward 10s",
+            "⏩ Skip Forward 10s",
             "⏮ Skip Back 10s",
             "❌ Close Video"
         )
@@ -396,10 +479,39 @@ class MainActivity : AppCompatActivity() {
             .setItems(options) { _, which ->
                 when (which) {
                     0 -> toggleMute()
-                    1 -> { playerLeft?.seekTo(0); playerRight?.seekTo(0); playVideo() }
-                    2 -> { val p = (playerLeft?.currentPosition ?: 0) + 10000; playerLeft?.seekTo(p); playerRight?.seekTo(p); playVideo() }
-                    3 -> { val p = maxOf(0, (playerLeft?.currentPosition ?: 0) - 10000); playerLeft?.seekTo(p); playerRight?.seekTo(p); playVideo() }
-                    4 -> { stopAndReset(); showHomeScreen() }
+                    1 -> {
+                        isLooping = !isLooping
+                        if (isLooping) isAutoNext = false
+                        Toast.makeText(
+                            this,
+                            if (isLooping) "Loop ON 🔁" else "Loop OFF",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                        playVideo()
+                    }
+                    2 -> {
+                        isAutoNext = !isAutoNext
+                        if (isAutoNext) isLooping = false
+                        if (isAutoNext && allVideoUris.isEmpty()) {
+                            loadAllVideosFromGallery()
+                        }
+                        Toast.makeText(
+                            this,
+                            if (isAutoNext) "Auto Next ON ⏭" else "Auto Next OFF",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                        playVideo()
+                    }
+                    3 -> { playerLeft?.seekTo(0); playerRight?.seekTo(0); playVideo() }
+                    4 -> {
+                        val p = (playerLeft?.currentPosition ?: 0) + 10000
+                        playerLeft?.seekTo(p); playerRight?.seekTo(p); playVideo()
+                    }
+                    5 -> {
+                        val p = maxOf(0, (playerLeft?.currentPosition ?: 0) - 10000)
+                        playerLeft?.seekTo(p); playerRight?.seekTo(p); playVideo()
+                    }
+                    6 -> { stopAndReset(); showHomeScreen() }
                 }
             }
             .setOnDismissListener { if (!isPlaying) playVideo() }
